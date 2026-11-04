@@ -553,7 +553,7 @@ async function openEditor(page, opts = {}) {
     bar.innerHTML = `
       <div class="sw" role="group" aria-label="Color">${PALETTE.map(([name, hex]) => `<button data-c="${hex}" style="background:${hex}" aria-label="${name}" aria-pressed="${hex === color}"></button>`).join('')}</div>
           <label class="range">${isText ? 'Size' : 'Thickness'}<input id="rng" type="range" min="${isText ? 14 : 1}" max="${isText ? 140 : 20}" step="1" value="${Math.round(val)}"></label>
-    ${isText ? `<label class="range">Rotation <input id="rot-rng" type="range" min="0" max="360" step="15" value="${el ? (el.rotation || 0) : 0}"></label>` : ''}
+    ${isText ? `<label class="range">Rotation <input id="rot-rng" type="range" min="0" max="360" step="1" list="rot-ticks" value="${el ? (el.rotation || 0) : 0}"></label><datalist id="rot-ticks"><option value="0"></option><option value="90"></option><option value="180"></option><option value="270"></option><option value="360"></option></datalist>` : ''}
     ${el ? `<div class="acts">
 
         ${isText ? `<button class="ib" data-p="edit" aria-label="Edit text">${ic('edit')}</button><button class="ib ${el.bold ? 'on' : ''}" data-p="bold" aria-label="Bold" aria-pressed="${!!el.bold}">${ic('bold')}</button>` : ''}
