@@ -552,10 +552,8 @@ async function openEditor(page, opts = {}) {
     bar.hidden = false;
     bar.innerHTML = `
       <div class="sw" role="group" aria-label="Color">${PALETTE.map(([name, hex]) => `<button data-c="${hex}" style="background:${hex}" aria-label="${name}" aria-pressed="${hex === color}"></button>`).join('')}</div>
-          <label class="range">${isText ? 'Size' : 'Thickness'}<input id="rng" type="range" min="${isText ? 14 : 1}" max="${isText ? 140 : 20}" step="1" value="${Math.round(val)}"></label>
-    ${isText ? `<label class="range">Rotation <input id="rot-rng" type="range" min="0" max="360" step="1" list="rot-ticks" value="${el ? (el.rotation || 0) : 0}"></label><datalist id="rot-ticks"><option value="0"></option><option value="90"></option><option value="180"></option><option value="270"></option><option value="360"></option></datalist>` : ''}
-    ${el ? `<div class="acts">
-
+      <label class="range">${isText ? 'Size' : 'Thickness'}<input id="rng" type="range" min="${isText ? 14 : 1}" max="${isText ? 140 : 20}" step="1" value="${Math.round(val)}"></label>
+      ${el ? `<div class="acts">
         ${isText ? `<button class="ib" data-p="edit" aria-label="Edit text">${ic('edit')}</button><button class="ib ${el.bold ? 'on' : ''}" data-p="bold" aria-label="Bold" aria-pressed="${!!el.bold}">${ic('bold')}</button>` : ''}
         ${el.type === 'brace' ? `<button class="ib" data-p="flip" aria-label="Turn the brace">${ic('flip')}</button>` : ''}
         <button class="ib" data-p="dup" aria-label="Duplicate">${ic('copy')}</button>
@@ -582,27 +580,15 @@ async function openEditor(page, opts = {}) {
       else if (a === 'del') ed.deleteSel();
     }
   });
-$('#propbar').addEventListener('input', (e) => {
-  if (e.target.id === 'rng') {
+  $('#propbar').addEventListener('input', (e) => {
+    if (e.target.id !== 'rng') return;
     const v = Number(e.target.value);
     const el = ed.getSel();
     const isText = el ? el.type === 'text' : ed.tool === 'text';
     if (el) ed.updateSel(isText ? { size: v } : { sw: v });
     else if (isText) ed.style.size = v;
     else ed.style.sw = v;
-  } else if (e.target.id === 'rot-rng') {
-    const v = Number(e.target.value);
-    const el = ed.getSel();
-    if (el && el.type === 'text') {
-      ed.updateSel({ rotation: v });
-      updateProps();
-    }
-  }
-});
-
-$('#propbar').addEventListener('change', (e) => { 
-  if ((e.target.id === 'rng' || e.target.id === 'rot-rng') && ed.getSel()) ed.commitSel(); 
-});
+  });
   $('#propbar').addEventListener('change', (e) => { if (e.target.id === 'rng' && ed.getSel()) ed.commitSel(); });
 
   /* top bar + tools */
@@ -698,95 +684,31 @@ async function renderBookmarks(fromPop) {
 }
 
 /* ======================= PDF export ======================= */
-function selectPagesModal(pages) {
-  return new Promise((res) => {
-    const listHtml = pages
-      .map(
-        (p, idx) => `
-      <label class="check" style="margin: 6px 0; display: flex; align-items: center; gap: 8px;">
-        <input type="checkbox" class="pg-chk" data-idx="${idx}" checked>
-        <span>Page ${idx + 1}${p.title ? ' · ' + esc(p.title) : ''}</span>
-      </label>`
-      )
-      .join('');
-
-    const m = modal(`
-      <h2>Export to PDF</h2>
-      <p style="margin-bottom: 12px; font-size: 14px; opacity: 0.8;">Choose which pages to include in your PDF export:</p>
-      <div class="row" style="margin-bottom: 12px; gap: 8px;">
-        <button class="btn" id="opt-all">Select All</button>
-        <button class="btn" id="opt-none">Deselect All</button>
-      </div>
-      <div style="max-height: 220px; overflow-y: auto; border: 1px solid rgba(128,128,128,0.2); padding: 8px; border-radius: 8px; margin-bottom: 16px;">
-        ${listHtml}
-      </div>
-      <div class="row">
-        <button class="btn" data-a="cancel">Cancel</button>
-        <button class="btn primary" data-a="export">Export PDF</button>
-      </div>
-    `);
-
-    m.q('#opt-all').onclick = () => m.el.querySelectorAll('.pg-chk').forEach((c) => (c.checked = true));
-    m.q('#opt-none').onclick = () => m.el.querySelectorAll('.pg-chk').forEach((c) => (c.checked = false));
-
-    m.el.addEventListener('click', (e) => {
-      const a = e.target.closest('[data-a]');
-      if (!a) return;
-      if (a.dataset.a === 'cancel') {
-        m.close();
-        res(null);
-      } else if (a.dataset.a === 'export') {
-        const checkedIdxs = [...m.el.querySelectorAll('.pg-chk:checked')].map((c) => Number(c.dataset.idx));
-        m.close();
-        res(checkedIdxs);
-      }
-    });
-
-    m.el.addEventListener('pointerdown', (e) => {
-      if (e.target === m.el) {
-        m.close();
-        res(null);
-      }
-    });
-  });
-}
-
 async function exportPDF(nb) {
+  const b = busy('Making your PDF…');
   try {
     const pages = await orderedPages(nb);
-    if (!pages.length) return toast('This notebook has no pages yet');
-
-    // 1. Prompt user to select pages
-    const selectedIndices = await selectPagesModal(pages);
-    if (!selectedIndices) return; // User cancelled
-    if (!selectedIndices.length) return toast('No pages were selected for export');
-
-    const pagesToExport = selectedIndices.map((idx) => pages[idx]);
-
-    // 2. Build PDF for chosen pages
-    const b = busy('Making your PDF…');
+    if (!pages.length) { b.hide(); return toast('This notebook has no pages yet'); }
     const { PDFDocument } = window.PDFLib;
     const doc = await PDFDocument.create();
     let i = 0;
-
-    for (const p of pagesToExport) {
+    for (const p of pages) {
       i++;
-      b.set(`Page ${i} of ${pagesToExport.length}…`);
+      b.set(`Page ${i} of ${pages.length}…`);
       const assets = await loadAssets(p);
       const c = await rasterPage(p, assets, 1.6);
       const blob = await new Promise((r) => c.toBlob(r, 'image/jpeg', 0.9));
       const img = await doc.embedJpg(new Uint8Array(await blob.arrayBuffer()));
-      const pw = 595,
-        ph = (595 * p.h) / p.w;
+      const pw = 595, ph = (595 * p.h) / p.w;
       doc.addPage([pw, ph]).drawImage(img, { x: 0, y: 0, width: pw, height: ph });
     }
-
     doc.setTitle(nb.name);
     const bytes = await doc.save();
     b.hide();
     download(new Blob([bytes], { type: 'application/pdf' }), safeName(nb.name) + '.pdf');
     toast('PDF saved');
   } catch (e) {
+    b.hide();
     toast('Could not make the PDF: ' + (e.message || e));
   }
 }
@@ -858,5 +780,5 @@ function wireInputs() {
 wireInputs();
 renderHome();
 if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
-if ('serviceWorker' in navigator && location.protocol.startsWith('http')) navigator.serviceWorker.register('./sw.js').catch(() => {});
+if ('serviceWorker' in navigator && location.protocol.startsWith('http')) navigator.serviceWorker.register('sw.js').catch(() => {});
 window.__ink = { S, db }; // handy for debugging in the browser console
