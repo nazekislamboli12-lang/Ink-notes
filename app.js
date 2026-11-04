@@ -780,5 +780,5 @@ function wireInputs() {
 wireInputs();
 renderHome();
 if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
-if ('serviceWorker' in navigator && location.protocol.startsWith('http')) navigator.serviceWorker.register('sw.js').catch(() => {});
+if ('serviceWorker' in navigator && location.protocol.startsWith('http')) navigator.serviceWorker.register('./sw.js').catch(() => {});
 window.__ink = { S, db }; // handy for debugging in the browser console
