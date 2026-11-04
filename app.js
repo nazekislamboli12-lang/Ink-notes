@@ -684,31 +684,95 @@ async function renderBookmarks(fromPop) {
 }
 
 /* ======================= PDF export ======================= */
+function selectPagesModal(pages) {
+  return new Promise((res) => {
+    const listHtml = pages
+      .map(
+        (p, idx) => `
+      <label class="check" style="margin: 6px 0; display: flex; align-items: center; gap: 8px;">
+        <input type="checkbox" class="pg-chk" data-idx="${idx}" checked>
+        <span>Page ${idx + 1}${p.title ? ' · ' + esc(p.title) : ''}</span>
+      </label>`
+      )
+      .join('');
+
+    const m = modal(`
+      <h2>Export to PDF</h2>
+      <p style="margin-bottom: 12px; font-size: 14px; opacity: 0.8;">Choose which pages to include in your PDF export:</p>
+      <div class="row" style="margin-bottom: 12px; gap: 8px;">
+        <button class="btn" id="opt-all">Select All</button>
+        <button class="btn" id="opt-none">Deselect All</button>
+      </div>
+      <div style="max-height: 220px; overflow-y: auto; border: 1px solid rgba(128,128,128,0.2); padding: 8px; border-radius: 8px; margin-bottom: 16px;">
+        ${listHtml}
+      </div>
+      <div class="row">
+        <button class="btn" data-a="cancel">Cancel</button>
+        <button class="btn primary" data-a="export">Export PDF</button>
+      </div>
+    `);
+
+    m.q('#opt-all').onclick = () => m.el.querySelectorAll('.pg-chk').forEach((c) => (c.checked = true));
+    m.q('#opt-none').onclick = () => m.el.querySelectorAll('.pg-chk').forEach((c) => (c.checked = false));
+
+    m.el.addEventListener('click', (e) => {
+      const a = e.target.closest('[data-a]');
+      if (!a) return;
+      if (a.dataset.a === 'cancel') {
+        m.close();
+        res(null);
+      } else if (a.dataset.a === 'export') {
+        const checkedIdxs = [...m.el.querySelectorAll('.pg-chk:checked')].map((c) => Number(c.dataset.idx));
+        m.close();
+        res(checkedIdxs);
+      }
+    });
+
+    m.el.addEventListener('pointerdown', (e) => {
+      if (e.target === m.el) {
+        m.close();
+        res(null);
+      }
+    });
+  });
+}
+
 async function exportPDF(nb) {
-  const b = busy('Making your PDF…');
   try {
     const pages = await orderedPages(nb);
-    if (!pages.length) { b.hide(); return toast('This notebook has no pages yet'); }
+    if (!pages.length) return toast('This notebook has no pages yet');
+
+    // 1. Prompt user to select pages
+    const selectedIndices = await selectPagesModal(pages);
+    if (!selectedIndices) return; // User cancelled
+    if (!selectedIndices.length) return toast('No pages were selected for export');
+
+    const pagesToExport = selectedIndices.map((idx) => pages[idx]);
+
+    // 2. Build PDF for chosen pages
+    const b = busy('Making your PDF…');
     const { PDFDocument } = window.PDFLib;
     const doc = await PDFDocument.create();
     let i = 0;
-    for (const p of pages) {
+
+    for (const p of pagesToExport) {
       i++;
-      b.set(`Page ${i} of ${pages.length}…`);
+      b.set(`Page ${i} of ${pagesToExport.length}…`);
       const assets = await loadAssets(p);
       const c = await rasterPage(p, assets, 1.6);
       const blob = await new Promise((r) => c.toBlob(r, 'image/jpeg', 0.9));
       const img = await doc.embedJpg(new Uint8Array(await blob.arrayBuffer()));
-      const pw = 595, ph = (595 * p.h) / p.w;
+      const pw = 595,
+        ph = (595 * p.h) / p.w;
       doc.addPage([pw, ph]).drawImage(img, { x: 0, y: 0, width: pw, height: ph });
     }
+
     doc.setTitle(nb.name);
     const bytes = await doc.save();
     b.hide();
     download(new Blob([bytes], { type: 'application/pdf' }), safeName(nb.name) + '.pdf');
     toast('PDF saved');
   } catch (e) {
-    b.hide();
     toast('Could not make the PDF: ' + (e.message || e));
   }
 }
