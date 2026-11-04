@@ -68,16 +68,18 @@ export function elementSVG(el) {
   const c = el.color || '#1a1a1a';
   const sw = el.sw || 4;
   switch (el.type) {
-        case 'text': {
+            case 'text': {
       const size = el.size || 32;
       const lh = size * 1.25;
       const lines = String(el.text || '').split('\n');
       const ts = lines
         .map((ln, i) => `<tspan x="0" y="${n(size * 0.9 + i * lh)}">${esc(ln) || '&#8203;'}</tspan>`)
         .join('');
+      // This rotates the text right around its own point (el.x, el.y)
       const rot = el.rotation ? ` transform="rotate(${el.rotation} ${n(el.x)} ${n(el.y)})"` : '';
       return `<text font-family="${FONT}" font-size="${n(size)}" font-weight="${el.bold ? 700 : 400}" fill="${c}" x="${n(el.x)}" y="${n(el.y)}"${rot} xml:space="preserve">${ts}</text>`;
     }
+
 
     case 'line':
       return `<line x1="${n(el.x1)}" y1="${n(el.y1)}" x2="${n(el.x2)}" y2="${n(el.y2)}" stroke="${c}" stroke-width="${sw}" stroke-linecap="round"/>`;
