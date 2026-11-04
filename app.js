@@ -552,8 +552,10 @@ async function openEditor(page, opts = {}) {
     bar.hidden = false;
     bar.innerHTML = `
       <div class="sw" role="group" aria-label="Color">${PALETTE.map(([name, hex]) => `<button data-c="${hex}" style="background:${hex}" aria-label="${name}" aria-pressed="${hex === color}"></button>`).join('')}</div>
-      <label class="range">${isText ? 'Size' : 'Thickness'}<input id="rng" type="range" min="${isText ? 14 : 1}" max="${isText ? 140 : 20}" step="1" value="${Math.round(val)}"></label>
-      ${el ? `<div class="acts">
+          <label class="range">${isText ? 'Size' : 'Thickness'}<input id="rng" type="range" min="${isText ? 14 : 1}" max="${isText ? 140 : 20}" step="1" value="${Math.round(val)}"></label>
+    ${isText ? `<label class="range">Rotation <input id="rot-rng" type="range" min="0" max="360" step="15" value="${el ? (el.rotation || 0) : 0}"></label>` : ''}
+    ${el ? `<div class="acts">
+
         ${isText ? `<button class="ib" data-p="edit" aria-label="Edit text">${ic('edit')}</button><button class="ib ${el.bold ? 'on' : ''}" data-p="bold" aria-label="Bold" aria-pressed="${!!el.bold}">${ic('bold')}</button>` : ''}
         ${el.type === 'brace' ? `<button class="ib" data-p="flip" aria-label="Turn the brace">${ic('flip')}</button>` : ''}
         <button class="ib" data-p="dup" aria-label="Duplicate">${ic('copy')}</button>
@@ -580,15 +582,27 @@ async function openEditor(page, opts = {}) {
       else if (a === 'del') ed.deleteSel();
     }
   });
-  $('#propbar').addEventListener('input', (e) => {
-    if (e.target.id !== 'rng') return;
+$('#propbar').addEventListener('input', (e) => {
+  if (e.target.id === 'rng') {
     const v = Number(e.target.value);
     const el = ed.getSel();
     const isText = el ? el.type === 'text' : ed.tool === 'text';
     if (el) ed.updateSel(isText ? { size: v } : { sw: v });
     else if (isText) ed.style.size = v;
     else ed.style.sw = v;
-  });
+  } else if (e.target.id === 'rot-rng') {
+    const v = Number(e.target.value);
+    const el = ed.getSel();
+    if (el && el.type === 'text') {
+      ed.updateSel({ rotation: v });
+      updateProps();
+    }
+  }
+});
+
+$('#propbar').addEventListener('change', (e) => { 
+  if ((e.target.id === 'rng' || e.target.id === 'rot-rng') && ed.getSel()) ed.commitSel(); 
+});
   $('#propbar').addEventListener('change', (e) => { if (e.target.id === 'rng' && ed.getSel()) ed.commitSel(); });
 
   /* top bar + tools */
