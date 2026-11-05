@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Ink Notes</title>
+<meta name="theme-color" content="#2b6fd6">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app"></div>
+<div id="modal-root"></div>
+<div id="toast" role="status" aria-live="polite"></div>
+<input type="file" id="file-camera" accept="image/*" capture="environment" hidden>
+<input type="file" id="file-gallery" accept="image/*" hidden>
+<input type="file" id="file-import" accept="image/*,application/pdf" multiple hidden>
+<input type="file" id="file-backup" accept="application/json,.json" hidden>
+<script type="module" src="app.js"></script>
+<script>
+setTimeout(function () {
+  if (!window.__inkLoaded) document.getElementById('app').innerHTML =
+    '<div style="padding:24px;font:16px system-ui;max-width:520px;margin:auto"><h2>The app could not start</h2><p>Some files are missing on the website. Upload ALL the files from the zip (there are no folders) to the same place, then reload. Needed: app.js, editor.js, db.js, ai.js, imaging.js, pdfwriter.js, style.css.</p></div>';
+}, 6000);
+</script>
+</body>
+</html>
