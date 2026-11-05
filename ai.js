@@ -31,7 +31,7 @@ ELEMENT TYPES
 5. {"type":"ellipse","box_2d":[...],"color":"#rrggbb"}  a circle or oval drawn around something.
 6. {"type":"rect","box_2d":[...],"color":"#rrggbb"}  a drawn box.
 7. {"type":"brace","box_2d":[...],"orient":"left","color":"#rrggbb"}  a curly brace; orient is the direction the pointed tip faces: left, right, up or down.
-8. {"type":"drawing","box_2d":[...],"description":"short description"}  ANY pictorial illustration, diagram, sketch or figure: a drawn plant, flower, leaf, cell, organ, animal, microscope view, graph, map and so on. The box must tightly contain the WHOLE drawing, including its own internal lines, shading and the pointer lines that go to its labels. Do NOT also output the drawing's internal strokes as arrows, lines or curves. The words that label a drawing are separate text elements (they are cut out of the drawing automatically).
+8. {"type":"drawing","strokes":[{"points":[[y,x],...],"closed":false,"color":"#rrggbb","width":"medium"}],"description":"short description"}  ANY pictorial illustration, diagram, sketch or figure: a drawn plant, flower, leaf, cell, organ, animal, microscope view, graph and so on. REDRAW it as clean vector line work, copying the shapes, proportions, positions and ink colors as faithfully as you can. Each stroke is one continuous pen line or one outline: follow it with 6 to 40 points in drawing order (more points for curvy parts, so curves look smooth). Use closed=true for outlines that loop back (a cell wall, a nucleus, a leaf outline, a circle). Include ALL internal structures (veins, organelles, membranes, petals, dots as tiny closed strokes) and the pointer lines that go from the drawing to its labels. width is "thin", "medium" or "thick" as drawn. If a region is filled or shaded with pen, you may add "fill":"#rrggbb" to a closed stroke. Use as many strokes as needed (up to about 150 per drawing). The words that label a drawing are separate text elements, not strokes.
    Simple arrows, circles, boxes and braces that connect or mark words are NOT drawings: use types 2-7 for those.
 
 RULES
@@ -230,14 +230,16 @@ export async function buildElements(data, page, settings, photo) {
         break;
       }
       case 'drawing': {
-        const b = box(e.box_2d);
-        if (!b || !photo) break;
-        // pad a little
-        const px = 6;
-        const pad = { x: Math.max(0, b.x - 5), y: Math.max(0, b.y - 5) };
-        pad.w = Math.min(1000, b.x + b.w + 5) - pad.x;
-        pad.h = Math.min(1000, b.y + b.h + 5) - pad.y;
-        back.push({ pad, desc: String(e.description || '') });
+        const gid = uid();
+        const W = { thin: 2.5, medium: 3.5, thick: 6 };
+        for (const st of (Array.isArray(e.strokes) ? e.strokes : []).slice(0, 400)) {
+          const pts = (Array.isArray(st && st.points) ? st.points : []).map(pt).filter(Boolean);
+          if (!pts.length) continue;
+          const el = { id: uid(), type: 'pen', pts: pts.map((p) => [p.x * sx, p.y * sy]), color: settings.forceBlack ? '#1a1a1a' : color(st.color, col), sw: W[st.width] || 3.5, grp: gid };
+          if (st.closed && pts.length > 2) el.closed = true;
+          if (el.closed && typeof st.fill === 'string' && /^#?[0-9a-f]{6}$/i.test(st.fill)) el.fill = color(st.fill, null);
+          front.push(el);
+        }
         break;
       }
       default:
@@ -245,7 +247,7 @@ export async function buildElements(data, page, settings, photo) {
     }
   }
   const images = [];
-  for (const d of back) {
+  for (const d of []) {
     const kx = photo.w / 1000, ky = photo.h / 1000;
     const crop = { x: d.pad.x * kx, y: d.pad.y * ky, w: d.pad.w * kx, h: d.pad.h * ky };
     const whites = textBoxes

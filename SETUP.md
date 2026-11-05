@@ -28,13 +28,13 @@ Chrome → ⋮ → **Install app**. (If you installed the old version, remove it
 https://aistudio.google.com/apikey → Create API key (no card). In the app: Settings → paste key → Test my key → Save.
 
 ## Using it
-- **Add page → photo**: the AI types the page, copies ink colors, rotates sideways text, and copies drawings as pictures.
-- Missed a drawing? Use the **crop tool** (last tool), drag a box over the drawing on the page; it is copied from your photo. Select it → "Background removed / Original background" toggles the look.
+- **Add page → photo**: the AI types the page, copies ink colors, rotates sideways text, and REDRAWS illustrations as editable lines and shapes (a drawing moves and deletes as one group).
+- Missed a drawing? Draw it with the pen tool, or use the crop tool (last tool) to paste an exact copy from the photo.
 - **Select** a thing → round handle on top rotates it; ±90° buttons; corner handles resize; for text the corner handle changes size. Any color with the rainbow circle.
 - **Two fingers**: pinch to zoom, drag to move around. One finger on the grey area also scrolls. No need for the zoom tool.
 - **Save as PDF** (download icon in a notebook): "Choose which pages" (pages already saved show "PDF ✓", "Not saved yet" selects the rest) or whole notebook. A page's ⋯ menu can save just that page.
 - Back up your notes: Settings → Save backup, every week or two.
 
 ## Honest notes
-- Illustrations are copied from the photo (cleaned of the board background), not redrawn. Quality depends on the photo: bright, flat, straight-on, no glare.
+- Illustrations are redrawn by the AI as lines and shapes, so they look clean but are an approximation; complex drawings may need touch-ups. Use the crop tool if you want an exact photo copy instead.
 - Free Gemini limits apply; photos go to Google.
