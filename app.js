@@ -1,13 +1,15 @@
 // app.js — screens: notebooks, pages, editor, settings, export
-import { Editor, PALETTE, rasterPage, uid, esc } from './editor.js';
+import { Editor, PALETTE, rasterPage, uid, esc, VERSION as ED_V } from './editor.js';
 import { db, saveAsset, getAsset, loadAssets, assetIdsOf, exportAll, importAll } from './db.js';
 import { buildPDF } from './pdfwriter.js';
 import { cropClean } from './imaging.js';
-import { readNotes, buildElements, testKey, DEFAULT_MODEL, AIError } from './ai.js';
+import { VERSION as AI_V, readNotes, readGraphics, mergeGraphics, traceRegion, buildElements, testKey, DEFAULT_MODEL, AIError } from './ai.js';
 
 const $ = (s, r = document) => r.querySelector(s);
 const app = $('#app');
 window.__inkLoaded = true;
+const VERSION = '4';
+if (ED_V !== VERSION || AI_V !== VERSION) setTimeout(() => { const d = document.createElement('div'); d.style.cssText = 'position:fixed;left:0;right:0;top:0;z-index:99;background:#c93636;color:#fff;padding:10px;text-align:center'; d.textContent = 'Some app files are old (mixed versions). Upload ALL files from the v4 zip, then reload twice.'; document.body.appendChild(d); }, 500);
 
 /* ---------- icons ---------- */
 const ICONS = {
@@ -414,11 +416,16 @@ async function aiFromFile(file) {
     b.set('Reading your notes… this can take up to a minute');
     const { data, model } = await readNotes(img.dataUrl, S.settings, (t) => b.set(t));
     if (!data || typeof data !== 'object') throw new Error('The AI answer could not be understood.');
+    let merged = data;
+    try {
+      b.set('Looking again for drawings…');
+      merged = mergeGraphics(data, await readGraphics(img.dataUrl, S.settings, () => {}));
+    } catch (e2) { if (e2 && e2.fatal) throw e2; /* keep the first reading */ }
     const page = newPage(nb.id, img.w, img.h);
     b.set('Copying your drawings…');
-    const built = await buildElements(data, page, S.settings, img);
+    const built = await buildElements(merged, page, S.settings, img);
     page.elements = built.elements;
-    page.title = typeof data.page_title === 'string' ? data.page_title.slice(0, 60) : '';
+    page.title = typeof merged.page_title === 'string' ? data.page_title.slice(0, 60) : '';
     page.ref = uid();
     await saveAsset(page.ref, img.dataUrl); // kept so you can lay the photo over the page while checking
     const assets = new Map([[page.ref, img.dataUrl]]);
@@ -500,7 +507,7 @@ async function importFiles(files) {
 /* ======================= EDITOR ======================= */
 const TOOLS = [
   ['hand', 'Move around'], ['select', 'Select and edit'], ['text', 'Type text'], ['pen', 'Draw'], ['curve', 'Curved arrow'],
-  ['arrow', 'Arrow'], ['line', 'Line'], ['circle', 'Circle'], ['rect', 'Box'], ['brace', 'Curly brace'], ['crop', 'Copy a drawing from the photo'],
+  ['arrow', 'Arrow'], ['line', 'Line'], ['circle', 'Circle'], ['rect', 'Box'], ['brace', 'Curly brace'], ['crop', 'Select part of the photo: redraw or copy'],
 ];
 const TOOL_MAP = { circle: 'ellipse' };
 
@@ -586,15 +593,37 @@ async function openEditor(page, opts = {}) {
     askText,
     canCrop: () => !!refSrc,
     cropRegion: async (b) => {
+      const choice = await new Promise((res) => {
+        const m = modal(`<h2>This part of the photo</h2>
+          <button class="opt" data-c="ai">${ic('sparkle')}<span>Redraw with AI<small>Lines and shapes you can edit</small></span></button>
+          <button class="opt" data-c="copy">${ic('image')}<span>Paste an exact copy<small>A cleaned picture from the photo</small></span></button>
+          <button class="opt" data-c="no">${ic('close')}<span>Cancel</span></button>`, { bottom: true });
+        m.el.addEventListener('click', (e) => { const c = e.target.closest('[data-c]'); if (c) { m.close(); res(c.dataset.c); } });
+        m.el.addEventListener('pointerdown', (e) => { if (e.target === m.el) res('no'); });
+      });
+      if (choice === 'no') return null;
       const sc = refImg.w / page.w;
-      const bz = busy('Copying that part of the photo…');
+      const box = { x: b.x * sc, y: b.y * sc, w: b.w * sc, h: b.h * sc };
+      const bz = busy(choice === 'ai' ? 'Redrawing with AI…' : 'Copying that part of the photo…');
       try {
-        const r = await cropClean(refSrc, { x: b.x * sc, y: b.y * sc, w: b.w * sc, h: b.h * sc }, [], 1000);
+        if (choice === 'ai') {
+          if (!S.settings.apiKey) { toast('Add your Gemini key in Settings first'); return null; }
+          const c = document.createElement('canvas');
+          const k = Math.min(1, 1400 / Math.max(box.w, box.h));
+          c.width = Math.max(8, Math.round(box.w * k)); c.height = Math.max(8, Math.round(box.h * k));
+          const im = await loadImage(refSrc);
+          c.getContext('2d').drawImage(im, box.x, box.y, box.w, box.h, 0, 0, c.width, c.height);
+          const els = await traceRegion(c.toDataURL('image/jpeg', 0.9), b, S.settings, (t) => bz.set(t));
+          if (!els.length) { toast('The AI found no drawing there'); return null; }
+          ed.addElements(els);
+          return null;
+        }
+        const r = await cropClean(refSrc, box, [], 1000);
         const a = uid(), rw = uid();
         await saveAsset(a, r.clean); await saveAsset(rw, r.raw);
         assets.set(a, r.clean); assets.set(rw, r.raw);
         return { id: uid(), type: 'image', x: b.x, y: b.y, w: b.w, h: b.h, asset: a, raw: rw, clean: true, rot: 0 };
-      } catch (e) { toast('Could not copy that part'); return null; }
+      } catch (e) { toast('Could not do that: ' + (e.message || e)); return null; }
       finally { bz.hide(); }
     },
   }));
@@ -612,7 +641,7 @@ async function openEditor(page, opts = {}) {
     const t = ed.tool;
     const drawing = ['pen', 'curve', 'arrow', 'line', 'ellipse', 'rect', 'brace', 'text'].includes(t);
     if (!el && !drawing) { bar.hidden = true; return; }
-    const isImg = el && el.type === 'image';
+    const isImg = el && (el.type === 'image' || el.type === 'sketch');
     const isText = el ? el.type === 'text' : t === 'text';
     const color = el ? el.color : isText ? ed.style.textColor : ed.style.color;
     const val = isText ? (el ? el.size : ed.style.size) : el ? el.sw : ed.style.sw;
@@ -625,7 +654,8 @@ async function openEditor(page, opts = {}) {
       <label class="range">${isText ? 'Size' : 'Thickness'}<input id="rng" type="range" min="${isText ? 10 : 1}" max="${isText ? 200 : 20}" step="1" value="${Math.round(val)}"></label>`}
       ${el ? `<div class="acts">
         ${isText ? `<button class="ib" data-p="edit" aria-label="Edit text">${ic('edit')}</button><button class="ib ${el.bold ? 'on' : ''}" data-p="bold" aria-label="Bold" aria-pressed="${!!el.bold}">${ic('bold')}</button>` : ''}
-        ${isImg ? `<button class="btn" data-p="clean" aria-pressed="${el.clean !== false}">${el.clean !== false ? 'Background removed' : 'Original background'}</button>` : ''}
+        ${el && el.type === 'sketch' ? `<button class="btn" data-p="ungroup">Edit pieces</button>` : ''}
+        ${el && el.type === 'image' ? `<button class="btn" data-p="clean" aria-pressed="${el.clean !== false}">${el.clean !== false ? 'Background removed' : 'Original background'}</button>` : ''}
         ${rot ? `<button class="ib" data-p="rotl" aria-label="Rotate left 90">${ic('rotl')}</button><button class="ib" data-p="rotr" aria-label="Rotate right 90">${ic('rotr')}</button>` : ''}
         ${el.type === 'brace' ? `<button class="ib" data-p="flip" aria-label="Turn the brace">${ic('flip')}</button>` : ''}
         <button class="ib" data-p="dup" aria-label="Duplicate">${ic('copy')}</button>
@@ -650,6 +680,7 @@ async function openEditor(page, opts = {}) {
       else if (a === 'dup') ed.duplicateSel();
       else if (a === 'front') ed.toFront();
       else if (a === 'del') ed.deleteSel();
+      else if (a === 'ungroup') ed.ungroupSel();
       else if (a === 'rotl') ed.rotateSel(-90);
       else if (a === 'rotr') ed.rotateSel(90);
       else if (a === 'clean') { ed.updateSel({ clean: el.clean === false }); ed.commitSel(); updateProps(); }
@@ -809,7 +840,7 @@ async function exportPDF(nb, pages) {
 function openSettings() {
   const s = S.settings;
   const m = modal(`
-    <h2>Settings</h2>
+    <h2>Settings <small class="note">v4</small></h2>
     <label for="s-key">Gemini API key (free)</label>
     <input id="s-key" type="password" autocomplete="off" spellcheck="false" placeholder="Paste your key here">
     <p class="note">Get a free key at <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a>. It is saved only on this device.</p>
