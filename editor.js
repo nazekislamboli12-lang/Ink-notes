@@ -92,20 +92,7 @@ function bracePath(el) {
   }).join(' ');
 }
 
-function closedPath(pts) {
-  const m = (a, b) => [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
-  const L = pts.length;
-  const s0 = m(pts[L - 1], pts[0]);
-  let d = `M ${n(s0[0])} ${n(s0[1])}`;
-  for (let i = 0; i < L; i++) {
-    const c = pts[i], e2 = m(pts[i], pts[(i + 1) % L]);
-    d += ` Q ${n(c[0])} ${n(c[1])} ${n(e2[0])} ${n(e2[1])}`;
-  }
-  return d + ' Z';
-}
-
-function smoothPath(pts, closed) {
-  if (closed && pts.length > 2) return closedPath(pts);
+function smoothPath(pts) {
   if (pts.length === 2) return `M ${n(pts[0][0])} ${n(pts[0][1])} L ${n(pts[1][0])} ${n(pts[1][1])}`;
   let d = `M ${n(pts[0][0])} ${n(pts[0][1])}`;
   for (let i = 1; i < pts.length - 1; i++) {
@@ -153,7 +140,7 @@ export function elementSVG(el, assets) {
       return `<path d="${bracePath(el)}" fill="none" stroke="${c}" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round"/>`;
     case 'pen': {
       if (el.pts.length === 1) return `<circle cx="${n(el.pts[0][0])}" cy="${n(el.pts[0][1])}" r="${sw / 2}" fill="${c}"/>`;
-      let s = `<path d="${smoothPath(el.pts, el.closed)}" fill="${el.fill || 'none'}" stroke="${c}" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round"/>`;
+      let s = `<path d="${smoothPath(el.pts)}" fill="none" stroke="${c}" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round"/>`;
       if (el.head && el.pts.length >= 2) {
         const l = el.pts[el.pts.length - 1];
         let k = el.pts.length - 2, p = el.pts[k];
@@ -187,7 +174,7 @@ function hitSVG(el) {
     case 'brace':
       return `<path d="${bracePath(el)}" ${st}/>`;
     case 'pen':
-      return el.pts.length > 1 ? `<path d="${smoothPath(el.pts, el.closed)}" ${st}/>` : `<circle cx="${n(el.pts[0][0])}" cy="${n(el.pts[0][1])}" r="${hs / 2}" fill="transparent" pointer-events="all"/>`;
+      return el.pts.length > 1 ? `<path d="${smoothPath(el.pts)}" ${st}/>` : `<circle cx="${n(el.pts[0][0])}" cy="${n(el.pts[0][1])}" r="${hs / 2}" fill="transparent" pointer-events="all"/>`;
     default:
       return '';
   }
@@ -459,7 +446,6 @@ export class Editor {
     else if ((d.mode === 'move' || d.mode === 'handle') && d.el && d.orig) {
       for (const k of Object.keys(d.el)) delete d.el[k];
       Object.assign(d.el, clone(d.orig));
-      for (const [x, o] of d.sibs || []) { for (const k of Object.keys(x)) delete x[k]; Object.assign(x, clone(o)); }
     }
     this.drag = null;
     this.cropBox = null;
@@ -504,7 +490,6 @@ export class Editor {
         this.sel = g.dataset.id;
         d.el = this.getSel();
         d.orig = clone(d.el);
-        d.sibs = d.el.grp ? this.page.elements.filter((x) => x !== d.el && x.grp === d.el.grp).map((x) => [x, clone(x)]) : [];
         d.mode = 'move';
         this.render();
         this.hooks.onSelect && this.hooks.onSelect(d.el);
@@ -557,7 +542,6 @@ export class Editor {
     if (Math.abs(dx) + Math.abs(dy) > 4 * (this.k || 1)) d.moved = true;
     if (d.mode === 'move' && d.moved) {
       moveEl(d.el, d.orig, dx, dy);
-      for (const [x, o] of d.sibs || []) moveEl(x, o, dx, dy);
     } else if (d.mode === 'handle') {
       this.dragHandle(d, p, e);
       d.moved = true;
@@ -740,8 +724,7 @@ export class Editor {
   }
   deleteSel() {
     if (!this.sel) return;
-    const cur = this.getSel();
-    this.page.elements = this.page.elements.filter((e) => e.id !== this.sel && !(cur && cur.grp && e.grp === cur.grp));
+    this.page.elements = this.page.elements.filter((e) => e.id !== this.sel);
     this.sel = null;
     this.commit();
     this.render();
