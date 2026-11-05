@@ -1,5 +1,5 @@
 // Service worker: lets the app open offline. Network first, so updates always show up when online.
-const CACHE = 'inknotes-v2';
+const CACHE = 'inknotes-v3';
 const SHELL = ['./', 'index.html', 'style.css', 'app.js', 'editor.js', 'db.js', 'ai.js', 'imaging.js', 'pdfwriter.js',
   'manifest.json', 'icon-192.png', 'icon-512.png', 'icon-maskable-512.png', 'pdf.min.mjs', 'pdf.worker.min.mjs'];
 
