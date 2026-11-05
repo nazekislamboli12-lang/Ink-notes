@@ -5,7 +5,6 @@
 import { uid, measureText } from './editor.js';
 import { cropClean } from './imaging.js';
 
-export const VERSION = '4';
 export const DEFAULT_MODEL = 'gemini-3.8-flash';
 const FALLBACKS = ['gemini-3.5-flash', 'gemini-3.5-flash-lite', 'gemini-3.1-flash-lite'];
 const ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/models/';
@@ -32,7 +31,8 @@ ELEMENT TYPES
 5. {"type":"ellipse","box_2d":[...],"color":"#rrggbb"}  a circle or oval drawn around something.
 6. {"type":"rect","box_2d":[...],"color":"#rrggbb"}  a drawn box.
 7. {"type":"brace","box_2d":[...],"orient":"left","color":"#rrggbb"}  a curly brace; orient is the direction the pointed tip faces: left, right, up or down.
-8. Pictures (drawn plants, cells, organs, animals, graphs, sketches) are redrawn in a separate step. Do NOT output anything for a picture: no "drawing" element and no arrows/lines/curves/circles that are part of the picture itself. Still output ALL the writing, including the labels of a picture, and the arrows/circles/braces that mark words.
+8. {"type":"drawing","box_2d":[...],"description":"short description"}  ANY pictorial illustration, diagram, sketch or figure: a drawn plant, flower, leaf, cell, organ, animal, microscope view, graph, map and so on. The box must tightly contain the WHOLE drawing, including its own internal lines, shading and the pointer lines that go to its labels. Do NOT also output the drawing's internal strokes as arrows, lines or curves. The words that label a drawing are separate text elements (they are cut out of the drawing automatically).
+   Simple arrows, circles, boxes and braces that connect or mark words are NOT drawings: use types 2-7 for those.
 
 RULES
 - Transcribe exactly what is written. Do not rephrase, summarize, expand, reorder, translate or add anything. Keep the writer's wording, capitalization and punctuation.${
@@ -82,13 +82,13 @@ function friendly(status, msg) {
   return new AIError(`AI error (${status}): ${msg}`);
 }
 
-export async function readNotes(dataUrl, settings, onStatus, promptOverride) {
+export async function readNotes(dataUrl, settings, onStatus) {
   const key = (settings.apiKey || '').trim();
   if (!key) throw new AIError('Add your free Gemini API key in Settings first.', true);
   const m = /^data:(.+?);base64,(.*)$/.exec(dataUrl);
   if (!m) throw new AIError('Could not read that photo.', true);
   const body = {
-    contents: [{ role: 'user', parts: [{ text: promptOverride || buildPrompt(settings) }, { inline_data: { mime_type: m[1], data: m[2] } }] }],
+    contents: [{ role: 'user', parts: [{ text: buildPrompt(settings) }, { inline_data: { mime_type: m[1], data: m[2] } }] }],
     generationConfig: { temperature: 0.1, responseMimeType: 'application/json' },
   };
   const first = (settings.model || DEFAULT_MODEL).trim();
@@ -186,83 +186,6 @@ function textElement(e, b, page, settings) {
   };
 }
 
-const STROKE_W = { thin: 2.5, medium: 3.5, thick: 6 };
-// all strokes of one picture become ONE editable "sketch" element (moves/resizes/rotates as a unit)
-function makeSketch(strokes, mapPt, settings, fallback) {
-  const list = [];
-  for (const st of (Array.isArray(strokes) ? strokes : []).slice(0, 250)) {
-    const pts = (Array.isArray(st && st.points) ? st.points : []).map(pt).filter(Boolean).slice(0, 120).map(mapPt);
-    if (pts.length < 2) continue;
-    const o = { pts, color: settings.forceBlack ? '#1a1a1a' : color(st.color, fallback), sw: STROKE_W[st.width] || 3.5 };
-    if (st.closed && pts.length > 2) o.closed = true;
-    if (o.closed && typeof st.fill === 'string' && /^#?[0-9a-f]{6}$/i.test(st.fill)) o.fill = color(st.fill, null);
-    list.push(o);
-  }
-  if (!list.length) return null;
-  let x1 = 1e9, y1 = 1e9, x2 = -1e9, y2 = -1e9;
-  for (const o of list) for (const [x, y] of o.pts) { x1 = Math.min(x1, x); y1 = Math.min(y1, y); x2 = Math.max(x2, x); y2 = Math.max(y2, y); }
-  const w = Math.max(20, x2 - x1), h = Math.max(20, y2 - y1);
-  const rnd = (v) => Math.round(v * 1000) / 1000;
-  return {
-    id: uid(), type: 'sketch', x: x1, y: y1, w, h, rot: 0,
-    strokes: list.map((o) => ({ pts: o.pts.map(([x, y]) => [rnd((x - x1) / w), rnd((y - y1) / h)]), color: o.color, sw: o.sw, closed: !!o.closed, fill: o.fill })),
-  };
-}
-
-const GRAPHICS_PROMPT = (whole) => `You are looking at ${whole ? 'a cropped part of' : ''} a photo of handwritten notes (whiteboard or paper). IGNORE ALL WRITING (words, letters, numbers). Look only at the PICTURES: ${whole ? 'redraw everything that is drawn here' : 'every illustration, diagram, sketch or figure'}. Include every part of each picture: outlines, internal lines, circles, dots, blobs, colored shapes, hatching, and the short pointer lines that touch it.
-
-COORDINATES: 0-1000 grid over the image you see. x across, y down, (0,0) top-left. Points are [y, x].
-
-Redraw each picture as vector strokes, copying shapes, proportions, positions and ink colors as faithfully as you can. A stroke is one continuous pen line or one outline: {"points":[[y,x],...],"closed":false,"color":"#rrggbb","width":"thin|medium|thick"}. Follow it with 6 to 40 points in drawing order (more points on curves). Use closed=true for outlines that loop back (circles, cells, leaf outlines). A circle must be a closed stroke with at least 10 points around it. Optionally "fill":"#rrggbb" on a closed stroke that is colored in. Use as many strokes as needed (up to about 150 per picture). Count the shapes in the photo and make sure none is missing.
-
-Reply with ONLY JSON: {"drawings":[{"description":"short","strokes":[...]}]}. If there are no pictures, reply {"drawings":[]}.`;
-
-// second look at the whole photo, only for pictures (finds circles/lines the first read missed)
-export async function readGraphics(dataUrl, settings, onStatus) {
-  const { data } = await readNotes(dataUrl, settings, onStatus, GRAPHICS_PROMPT(false));
-  return Array.isArray(data && data.drawings) ? data.drawings : [];
-}
-
-// redraw one region (a cropped photo) -> pen elements placed inside region {x,y,w,h} in page units
-export async function traceRegion(cropDataUrl, region, settings, onStatus) {
-  const { data } = await readNotes(cropDataUrl, settings, onStatus, GRAPHICS_PROMPT(true));
-  const strokes = (Array.isArray(data && data.drawings) ? data.drawings : []).flatMap((d) => (Array.isArray(d && d.strokes) ? d.strokes : []));
-  const sk = makeSketch(strokes, (p) => [region.x + (p.x * region.w) / 1000, region.y + (p.y * region.h) / 1000], settings, '#1a1a1a');
-  return sk ? [sk] : [];
-}
-
-function strokesBox(strokes) {
-  let x1 = 1e9, y1 = 1e9, x2 = -1e9, y2 = -1e9;
-  for (const st of strokes || []) for (const p of (st && st.points) || []) { const q = pt(p); if (!q) continue; x1 = Math.min(x1, q.x); y1 = Math.min(y1, q.y); x2 = Math.max(x2, q.x); y2 = Math.max(y2, q.y); }
-  return x2 >= x1 ? { x: x1, y: y1, w: x2 - x1, h: y2 - y1 } : null;
-}
-// put the pictures from the second look into the first answer without doubles
-export function mergeGraphics(data, drawings) {
-  const good = drawings.filter((d) => d && Array.isArray(d.strokes) && d.strokes.length);
-  if (!good.length) return data;
-  const boxes = good.map((d) => strokesBox(d.strokes)).filter(Boolean);
-  const inside = (b) => boxes.some((g) => {
-    const ox = Math.max(0, Math.min(b.x + b.w, g.x + g.w) - Math.max(b.x, g.x));
-    const oy = Math.max(0, Math.min(b.y + b.h, g.y + g.h) - Math.max(b.y, g.y));
-    return b.w * b.h > 0 && (ox * oy) / (b.w * b.h) > 0.6;
-  });
-  const keep = (data.elements || []).filter((e) => {
-    if (!e || e.type === 'drawing') return false;
-    if (['ellipse', 'rect'].includes(e.type)) { const b = box(e.box_2d); return !(b && inside(b)); }
-    if (e.type === 'curve') {
-      const pts = (e.points || []).map(pt).filter(Boolean);
-      if (!pts.length) return true;
-      const bx = { x: Math.min(...pts.map((p) => p.x)), y: Math.min(...pts.map((p) => p.y)), w: 1, h: 1 };
-      bx.w = Math.max(1, Math.max(...pts.map((p) => p.x)) - bx.x); bx.h = Math.max(1, Math.max(...pts.map((p) => p.y)) - bx.y);
-      return !inside(bx);
-    }
-    return true;
-  });
-  const base = data.elements || [];
-  if (keep.filter((e) => e.type === 'text').length < base.filter((e) => e && e.type === 'text').length) return data;
-  return { ...data, elements: [...keep, ...good.map((d) => ({ type: 'drawing', strokes: d.strokes, description: d.description }))] };
-}
-
 export async function buildElements(data, page, settings, photo) {
   // photo = {dataUrl, w, h} (the picture that was sent to the AI)
   const sx = page.w / 1000, sy = page.h / 1000;
@@ -307,15 +230,33 @@ export async function buildElements(data, page, settings, photo) {
         break;
       }
       case 'drawing': {
-        try {
-          const sk = makeSketch(e.strokes, (p) => [p.x * sx, p.y * sy], settings, col);
-          if (sk) back.push(sk);
-        } catch (err) { /* a bad drawing never removes the rest of the page */ }
+        const b = box(e.box_2d);
+        if (!b || !photo) break;
+        // pad a little
+        const px = 6;
+        const pad = { x: Math.max(0, b.x - 5), y: Math.max(0, b.y - 5) };
+        pad.w = Math.min(1000, b.x + b.w + 5) - pad.x;
+        pad.h = Math.min(1000, b.y + b.h + 5) - pad.y;
+        back.push({ pad, desc: String(e.description || '') });
         break;
       }
       default:
         break;
     }
   }
-  return { elements: [...back, ...front], assets: newAssets };
+  const images = [];
+  for (const d of back) {
+    const kx = photo.w / 1000, ky = photo.h / 1000;
+    const crop = { x: d.pad.x * kx, y: d.pad.y * ky, w: d.pad.w * kx, h: d.pad.h * ky };
+    const whites = textBoxes
+      .filter((t) => t.x < d.pad.x + d.pad.w && t.x + t.w > d.pad.x && t.y < d.pad.y + d.pad.h && t.y + t.h > d.pad.y)
+      .map((t) => ({ x: t.x * kx - 4, y: t.y * ky - 4, w: t.w * kx + 8, h: t.h * ky + 8 }));
+    try {
+      const r = await cropClean(photo.dataUrl, crop, whites);
+      const aId = uid(), rId = uid();
+      newAssets.push({ id: aId, data: r.clean }, { id: rId, data: r.raw });
+      images.push({ id: uid(), type: 'image', x: d.pad.x * sx, y: d.pad.y * sy, w: d.pad.w * sx, h: d.pad.h * sy, asset: aId, raw: rId, clean: true, rot: 0, desc: d.desc });
+    } catch (err) { /* skip this drawing */ }
+  }
+  return { elements: [...images, ...front], assets: newAssets };
 }

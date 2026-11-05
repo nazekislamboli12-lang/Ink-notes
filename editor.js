@@ -2,7 +2,6 @@
 // Supports: text (rotatable), pen / curved arrows, arrows, lines, circles, boxes, braces,
 // images (illustrations), two-finger pinch zoom + pan, rotate handle, undo/redo.
 
-export const VERSION = '4';
 export const FONT = "Roboto,'Segoe UI',system-ui,-apple-system,'Noto Sans',Arial,sans-serif";
 export const PALETTE = [
   ['Black', '#1a1a1a'],
@@ -55,7 +54,6 @@ export function bboxOf(el) {
     case 'rect':
     case 'brace':
     case 'image':
-    case 'sketch':
       return { x: el.x, y: el.y, w: el.w, h: el.h };
     case 'pen': {
       let x1 = Infinity, y1 = Infinity, x2 = -Infinity, y2 = -Infinity;
@@ -94,20 +92,7 @@ function bracePath(el) {
   }).join(' ');
 }
 
-function closedPath(pts) {
-  const m = (a, b) => [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
-  const L = pts.length;
-  const s0 = m(pts[L - 1], pts[0]);
-  let d = `M ${n(s0[0])} ${n(s0[1])}`;
-  for (let i = 0; i < L; i++) {
-    const c = pts[i], e2 = m(pts[i], pts[(i + 1) % L]);
-    d += ` Q ${n(c[0])} ${n(c[1])} ${n(e2[0])} ${n(e2[1])}`;
-  }
-  return d + ' Z';
-}
-
-function smoothPath(pts, closed) {
-  if (closed && pts.length > 2) return closedPath(pts);
+function smoothPath(pts) {
   if (pts.length === 2) return `M ${n(pts[0][0])} ${n(pts[0][1])} L ${n(pts[1][0])} ${n(pts[1][1])}`;
   let d = `M ${n(pts[0][0])} ${n(pts[0][1])}`;
   for (let i = 1; i < pts.length - 1; i++) {
@@ -155,7 +140,7 @@ export function elementSVG(el, assets) {
       return `<path d="${bracePath(el)}" fill="none" stroke="${c}" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round"/>`;
     case 'pen': {
       if (el.pts.length === 1) return `<circle cx="${n(el.pts[0][0])}" cy="${n(el.pts[0][1])}" r="${sw / 2}" fill="${c}"/>`;
-      let s = `<path d="${smoothPath(el.pts, el.closed)}" fill="${el.fill || 'none'}" stroke="${c}" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round"/>`;
+      let s = `<path d="${smoothPath(el.pts)}" fill="none" stroke="${c}" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round"/>`;
       if (el.head && el.pts.length >= 2) {
         const l = el.pts[el.pts.length - 1];
         let k = el.pts.length - 2, p = el.pts[k];
@@ -164,8 +149,6 @@ export function elementSVG(el, assets) {
       }
       return s;
     }
-    case 'sketch':
-      return sketchPens(el).map((p) => elementSVG(p)).join('');
     case 'image': {
       const src = assets && assets.get(el.clean === false ? el.raw : el.asset);
       if (!src) return `<rect x="${n(el.x)}" y="${n(el.y)}" width="${n(el.w)}" height="${n(el.h)}" fill="#eef1f6" stroke="#b9c2d0" stroke-dasharray="8 6"/>`;
@@ -190,10 +173,8 @@ function hitSVG(el) {
       return `<rect x="${n(el.x)}" y="${n(el.y)}" width="${n(el.w)}" height="${n(el.h)}" ${st}/>`;
     case 'brace':
       return `<path d="${bracePath(el)}" ${st}/>`;
-    case 'sketch':
-      return `<rect x="${n(el.x)}" y="${n(el.y)}" width="${n(el.w)}" height="${n(el.h)}" fill="transparent" pointer-events="all"/>`;
     case 'pen':
-      return el.pts.length > 1 ? `<path d="${smoothPath(el.pts, el.closed)}" ${st}/>` : `<circle cx="${n(el.pts[0][0])}" cy="${n(el.pts[0][1])}" r="${hs / 2}" fill="transparent" pointer-events="all"/>`;
+      return el.pts.length > 1 ? `<path d="${smoothPath(el.pts)}" ${st}/>` : `<circle cx="${n(el.pts[0][0])}" cy="${n(el.pts[0][1])}" r="${hs / 2}" fill="transparent" pointer-events="all"/>`;
     default:
       return '';
   }
@@ -243,16 +224,6 @@ export async function rasterPage(page, assets, scale = 1) {
   } finally {
     URL.revokeObjectURL(url);
   }
-}
-
-// a sketch = many strokes saved relative to its box (0..1); turn them into absolute pen strokes
-export function sketchPens(el) {
-  return (el.strokes || []).map((s) => {
-    const p = { id: el.id + 's', type: 'pen', pts: s.pts.map(([u, v]) => [el.x + u * el.w, el.y + v * el.h]), color: s.color || '#1a1a1a', sw: s.sw || 3.5 };
-    if (s.closed) p.closed = true;
-    if (s.fill) p.fill = s.fill;
-    return p;
-  });
 }
 
 function moveEl(el, o, dx, dy) {
@@ -428,7 +399,7 @@ export class Editor {
           h += `<line x1="${n(c.x)}" y1="${n(bb.y - pad)}" x2="${n(c.x)}" y2="${n(top)}" stroke="#2b7de9" stroke-width="1.5" vector-effect="non-scaling-stroke" pointer-events="none"/>`;
           h += dot('rot', c.x, top, '#2b7de9');
           if (el.type === 'text') h += dot('ts', bb.x + bb.w + pad, bb.y + bb.h + pad);
-          else if (el.type === 'ellipse' || el.type === 'rect' || el.type === 'brace' || el.type === 'image' || el.type === 'sketch')
+          else if (el.type === 'ellipse' || el.type === 'rect' || el.type === 'brace' || el.type === 'image')
             h += dot('nw', bb.x, bb.y) + dot('ne', bb.x + bb.w, bb.y) + dot('sw', bb.x, bb.y + bb.h) + dot('se', bb.x + bb.w, bb.y + bb.h);
           h += '</g>';
         }
@@ -619,7 +590,7 @@ export class Editor {
     const lp = rotPt(p, c0, -(o.rot || 0));
     let x1 = o.x, y1 = o.y, x2 = o.x + o.w, y2 = o.y + o.h;
     const west = d.h.includes('w'), north = d.h.includes('n');
-    if (el.type === 'image' || el.type === 'sketch') {
+    if (el.type === 'image') {
       const ax = west ? x2 : x1, ay = north ? y2 : y1;
       const w = Math.max(10, Math.abs(lp.x - ax));
       const h = (w * o.h) / o.w;
@@ -750,17 +721,6 @@ export class Editor {
     el.rot = r;
     this.commit();
     this.render();
-  }
-  ungroupSel() {
-    const el = this.getSel();
-    if (!el || el.type !== 'sketch') return;
-    const i = this.page.elements.indexOf(el);
-    const pens = sketchPens(el).map((p) => ({ ...p, id: uid() }));
-    this.page.elements.splice(i, 1, ...pens);
-    this.sel = null;
-    this.commit();
-    this.render();
-    this.hooks.onSelect && this.hooks.onSelect(null);
   }
   deleteSel() {
     if (!this.sel) return;
