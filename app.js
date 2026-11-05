@@ -3,7 +3,7 @@ import { Editor, PALETTE, rasterPage, uid, esc } from './editor.js';
 import { db, saveAsset, getAsset, loadAssets, assetIdsOf, exportAll, importAll } from './db.js';
 import { buildPDF } from './pdfwriter.js';
 import { cropClean } from './imaging.js';
-import { readNotes, readGraphics, mergeGraphics, traceRegion, buildElements, testKey, DEFAULT_MODEL, AIError } from './ai.js';
+import { readNotes, buildElements, testKey, DEFAULT_MODEL, AIError } from './ai.js';
 
 const $ = (s, r = document) => r.querySelector(s);
 const app = $('#app');
@@ -414,16 +414,11 @@ async function aiFromFile(file) {
     b.set('Reading your notes… this can take up to a minute');
     const { data, model } = await readNotes(img.dataUrl, S.settings, (t) => b.set(t));
     if (!data || typeof data !== 'object') throw new Error('The AI answer could not be understood.');
-    let merged = data;
-    try {
-      b.set('Looking again for drawings…');
-      merged = mergeGraphics(data, await readGraphics(img.dataUrl, S.settings, () => {}));
-    } catch (e2) { if (e2 && e2.fatal) throw e2; /* keep the first reading */ }
     const page = newPage(nb.id, img.w, img.h);
     b.set('Copying your drawings…');
-    const built = await buildElements(merged, page, S.settings, img);
+    const built = await buildElements(data, page, S.settings, img);
     page.elements = built.elements;
-    page.title = typeof merged.page_title === 'string' ? data.page_title.slice(0, 60) : '';
+    page.title = typeof data.page_title === 'string' ? data.page_title.slice(0, 60) : '';
     page.ref = uid();
     await saveAsset(page.ref, img.dataUrl); // kept so you can lay the photo over the page while checking
     const assets = new Map([[page.ref, img.dataUrl]]);
@@ -505,7 +500,7 @@ async function importFiles(files) {
 /* ======================= EDITOR ======================= */
 const TOOLS = [
   ['hand', 'Move around'], ['select', 'Select and edit'], ['text', 'Type text'], ['pen', 'Draw'], ['curve', 'Curved arrow'],
-  ['arrow', 'Arrow'], ['line', 'Line'], ['circle', 'Circle'], ['rect', 'Box'], ['brace', 'Curly brace'], ['crop', 'Select part of the photo: redraw or copy'],
+  ['arrow', 'Arrow'], ['line', 'Line'], ['circle', 'Circle'], ['rect', 'Box'], ['brace', 'Curly brace'], ['crop', 'Copy a drawing from the photo'],
 ];
 const TOOL_MAP = { circle: 'ellipse' };
 
@@ -591,37 +586,15 @@ async function openEditor(page, opts = {}) {
     askText,
     canCrop: () => !!refSrc,
     cropRegion: async (b) => {
-      const choice = await new Promise((res) => {
-        const m = modal(`<h2>This part of the photo</h2>
-          <button class="opt" data-c="ai">${ic('sparkle')}<span>Redraw with AI<small>Lines and shapes you can edit</small></span></button>
-          <button class="opt" data-c="copy">${ic('image')}<span>Paste an exact copy<small>A cleaned picture from the photo</small></span></button>
-          <button class="opt" data-c="no">${ic('close')}<span>Cancel</span></button>`, { bottom: true });
-        m.el.addEventListener('click', (e) => { const c = e.target.closest('[data-c]'); if (c) { m.close(); res(c.dataset.c); } });
-        m.el.addEventListener('pointerdown', (e) => { if (e.target === m.el) res('no'); });
-      });
-      if (choice === 'no') return null;
       const sc = refImg.w / page.w;
-      const box = { x: b.x * sc, y: b.y * sc, w: b.w * sc, h: b.h * sc };
-      const bz = busy(choice === 'ai' ? 'Redrawing with AI…' : 'Copying that part of the photo…');
+      const bz = busy('Copying that part of the photo…');
       try {
-        if (choice === 'ai') {
-          if (!S.settings.apiKey) { toast('Add your Gemini key in Settings first'); return null; }
-          const c = document.createElement('canvas');
-          const k = Math.min(1, 1400 / Math.max(box.w, box.h));
-          c.width = Math.max(8, Math.round(box.w * k)); c.height = Math.max(8, Math.round(box.h * k));
-          const im = await loadImage(refSrc);
-          c.getContext('2d').drawImage(im, box.x, box.y, box.w, box.h, 0, 0, c.width, c.height);
-          const els = await traceRegion(c.toDataURL('image/jpeg', 0.9), b, S.settings, (t) => bz.set(t));
-          if (!els.length) { toast('The AI found no drawing there'); return null; }
-          ed.addElements(els);
-          return null;
-        }
-        const r = await cropClean(refSrc, box, [], 1000);
+        const r = await cropClean(refSrc, { x: b.x * sc, y: b.y * sc, w: b.w * sc, h: b.h * sc }, [], 1000);
         const a = uid(), rw = uid();
         await saveAsset(a, r.clean); await saveAsset(rw, r.raw);
         assets.set(a, r.clean); assets.set(rw, r.raw);
         return { id: uid(), type: 'image', x: b.x, y: b.y, w: b.w, h: b.h, asset: a, raw: rw, clean: true, rot: 0 };
-      } catch (e) { toast('Could not do that: ' + (e.message || e)); return null; }
+      } catch (e) { toast('Could not copy that part'); return null; }
       finally { bz.hide(); }
     },
   }));

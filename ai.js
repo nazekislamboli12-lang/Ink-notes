@@ -32,7 +32,7 @@ ELEMENT TYPES
 6. {"type":"rect","box_2d":[...],"color":"#rrggbb"}  a drawn box.
 7. {"type":"brace","box_2d":[...],"orient":"left","color":"#rrggbb"}  a curly brace; orient is the direction the pointed tip faces: left, right, up or down.
 8. {"type":"drawing","strokes":[{"points":[[y,x],...],"closed":false,"color":"#rrggbb","width":"medium"}],"description":"short description"}  ANY pictorial illustration, diagram, sketch or figure: a drawn plant, flower, leaf, cell, organ, animal, microscope view, graph and so on. REDRAW it as clean vector line work, copying the shapes, proportions, positions and ink colors as faithfully as you can. Each stroke is one continuous pen line or one outline: follow it with 6 to 40 points in drawing order (more points for curvy parts, so curves look smooth). Use closed=true for outlines that loop back (a cell wall, a nucleus, a leaf outline, a circle). Include ALL internal structures (veins, organelles, membranes, petals, dots as tiny closed strokes) and the pointer lines that go from the drawing to its labels. width is "thin", "medium" or "thick" as drawn. If a region is filled or shaded with pen, you may add "fill":"#rrggbb" to a closed stroke. Use as many strokes as needed (up to about 150 per drawing). The words that label a drawing are separate text elements, not strokes.
-   Circles, dots, blobs and lines that are PART of a drawing belong inside the drawing's strokes. Simple arrows, circles, boxes and braces that connect or mark words are NOT drawings: use types 2-7 for those.
+   Simple arrows, circles, boxes and braces that connect or mark words are NOT drawings: use types 2-7 for those.
 
 RULES
 - Transcribe exactly what is written. Do not rephrase, summarize, expand, reorder, translate or add anything. Keep the writer's wording, capitalization and punctuation.${
@@ -82,13 +82,13 @@ function friendly(status, msg) {
   return new AIError(`AI error (${status}): ${msg}`);
 }
 
-export async function readNotes(dataUrl, settings, onStatus, promptOverride) {
+export async function readNotes(dataUrl, settings, onStatus) {
   const key = (settings.apiKey || '').trim();
   if (!key) throw new AIError('Add your free Gemini API key in Settings first.', true);
   const m = /^data:(.+?);base64,(.*)$/.exec(dataUrl);
   if (!m) throw new AIError('Could not read that photo.', true);
   const body = {
-    contents: [{ role: 'user', parts: [{ text: promptOverride || buildPrompt(settings) }, { inline_data: { mime_type: m[1], data: m[2] } }] }],
+    contents: [{ role: 'user', parts: [{ text: buildPrompt(settings) }, { inline_data: { mime_type: m[1], data: m[2] } }] }],
     generationConfig: { temperature: 0.1, responseMimeType: 'application/json' },
   };
   const first = (settings.model || DEFAULT_MODEL).trim();
@@ -186,72 +186,6 @@ function textElement(e, b, page, settings) {
   };
 }
 
-const STROKE_W = { thin: 2.5, medium: 3.5, thick: 6 };
-function strokeEls(strokes, gid, mapPt, settings, fallback) {
-  const out = [];
-  for (const st of (Array.isArray(strokes) ? strokes : []).slice(0, 400)) {
-    const pts = (Array.isArray(st && st.points) ? st.points : []).map(pt).filter(Boolean);
-    if (!pts.length) continue;
-    const el = { id: uid(), type: 'pen', pts: pts.map(mapPt), color: settings.forceBlack ? '#1a1a1a' : color(st.color, fallback), sw: STROKE_W[st.width] || 3.5, grp: gid };
-    if (st.closed && pts.length > 2) el.closed = true;
-    if (el.closed && typeof st.fill === 'string' && /^#?[0-9a-f]{6}$/i.test(st.fill)) el.fill = color(st.fill, null);
-    out.push(el);
-  }
-  return out;
-}
-
-const GRAPHICS_PROMPT = (whole) => `You are looking at ${whole ? 'a cropped part of' : ''} a photo of handwritten notes (whiteboard or paper). IGNORE ALL WRITING (words, letters, numbers). Look only at the PICTURES: ${whole ? 'redraw everything that is drawn here' : 'every illustration, diagram, sketch or figure'}. Include every part of each picture: outlines, internal lines, circles, dots, blobs, colored shapes, hatching, and the short pointer lines that touch it.
-
-COORDINATES: 0-1000 grid over the image you see. x across, y down, (0,0) top-left. Points are [y, x].
-
-Redraw each picture as vector strokes, copying shapes, proportions, positions and ink colors as faithfully as you can. A stroke is one continuous pen line or one outline: {"points":[[y,x],...],"closed":false,"color":"#rrggbb","width":"thin|medium|thick"}. Follow it with 6 to 40 points in drawing order (more points on curves). Use closed=true for outlines that loop back (circles, cells, leaf outlines). A circle must be a closed stroke with at least 10 points around it. Optionally "fill":"#rrggbb" on a closed stroke that is colored in. Use as many strokes as needed (up to about 150 per picture). Count the shapes in the photo and make sure none is missing.
-
-Reply with ONLY JSON: {"drawings":[{"description":"short","strokes":[...]}]}. If there are no pictures, reply {"drawings":[]}.`;
-
-// second look at the whole photo, only for pictures (finds circles/lines the first read missed)
-export async function readGraphics(dataUrl, settings, onStatus) {
-  const { data } = await readNotes(dataUrl, settings, onStatus, GRAPHICS_PROMPT(false));
-  return Array.isArray(data && data.drawings) ? data.drawings : [];
-}
-
-// redraw one region (a cropped photo) -> pen elements placed inside region {x,y,w,h} in page units
-export async function traceRegion(cropDataUrl, region, settings, onStatus) {
-  const { data } = await readNotes(cropDataUrl, settings, onStatus, GRAPHICS_PROMPT(true));
-  const gid = uid();
-  const strokes = (Array.isArray(data && data.drawings) ? data.drawings : []).flatMap((d) => (Array.isArray(d && d.strokes) ? d.strokes : []));
-  return strokeEls(strokes, gid, (p) => [region.x + (p.x * region.w) / 1000, region.y + (p.y * region.h) / 1000], settings, '#1a1a1a');
-}
-
-function strokesBox(strokes) {
-  let x1 = 1e9, y1 = 1e9, x2 = -1e9, y2 = -1e9;
-  for (const st of strokes || []) for (const p of (st && st.points) || []) { const q = pt(p); if (!q) continue; x1 = Math.min(x1, q.x); y1 = Math.min(y1, q.y); x2 = Math.max(x2, q.x); y2 = Math.max(y2, q.y); }
-  return x2 >= x1 ? { x: x1, y: y1, w: x2 - x1, h: y2 - y1 } : null;
-}
-// put the pictures from the second look into the first answer without doubles
-export function mergeGraphics(data, drawings) {
-  const good = drawings.filter((d) => d && Array.isArray(d.strokes) && d.strokes.length);
-  if (!good.length) return data;
-  const boxes = good.map((d) => strokesBox(d.strokes)).filter(Boolean);
-  const inside = (b) => boxes.some((g) => {
-    const ox = Math.max(0, Math.min(b.x + b.w, g.x + g.w) - Math.max(b.x, g.x));
-    const oy = Math.max(0, Math.min(b.y + b.h, g.y + g.h) - Math.max(b.y, g.y));
-    return b.w * b.h > 0 && (ox * oy) / (b.w * b.h) > 0.6;
-  });
-  const keep = (data.elements || []).filter((e) => {
-    if (!e || e.type === 'drawing') return false;
-    if (['ellipse', 'rect'].includes(e.type)) { const b = box(e.box_2d); return !(b && inside(b)); }
-    if (e.type === 'curve') {
-      const pts = (e.points || []).map(pt).filter(Boolean);
-      if (!pts.length) return true;
-      const bx = { x: Math.min(...pts.map((p) => p.x)), y: Math.min(...pts.map((p) => p.y)), w: 1, h: 1 };
-      bx.w = Math.max(1, Math.max(...pts.map((p) => p.x)) - bx.x); bx.h = Math.max(1, Math.max(...pts.map((p) => p.y)) - bx.y);
-      return !inside(bx);
-    }
-    return true;
-  });
-  return { ...data, elements: [...keep, ...good.map((d) => ({ type: 'drawing', strokes: d.strokes, description: d.description }))] };
-}
-
 export async function buildElements(data, page, settings, photo) {
   // photo = {dataUrl, w, h} (the picture that was sent to the AI)
   const sx = page.w / 1000, sy = page.h / 1000;
@@ -296,7 +230,16 @@ export async function buildElements(data, page, settings, photo) {
         break;
       }
       case 'drawing': {
-        front.push(...strokeEls(e.strokes, uid(), (p) => [p.x * sx, p.y * sy], settings, col));
+        const gid = uid();
+        const W = { thin: 2.5, medium: 3.5, thick: 6 };
+        for (const st of (Array.isArray(e.strokes) ? e.strokes : []).slice(0, 400)) {
+          const pts = (Array.isArray(st && st.points) ? st.points : []).map(pt).filter(Boolean);
+          if (!pts.length) continue;
+          const el = { id: uid(), type: 'pen', pts: pts.map((p) => [p.x * sx, p.y * sy]), color: settings.forceBlack ? '#1a1a1a' : color(st.color, col), sw: W[st.width] || 3.5, grp: gid };
+          if (st.closed && pts.length > 2) el.closed = true;
+          if (el.closed && typeof st.fill === 'string' && /^#?[0-9a-f]{6}$/i.test(st.fill)) el.fill = color(st.fill, null);
+          front.push(el);
+        }
         break;
       }
       default:
