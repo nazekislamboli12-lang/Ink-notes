@@ -3,9 +3,9 @@
 // and illustrations (cut out of the photo so they are copied exactly).
 
 import { uid, measureText } from './editor.js';
-import { cropClean } from './imaging.js';
+import { cropClean, traceInk } from './imaging.js';
 
-export const VERSION = '4';
+export const VERSION = '6';
 export const DEFAULT_MODEL = 'gemini-3.8-flash';
 const FALLBACKS = ['gemini-3.5-flash', 'gemini-3.5-flash-lite', 'gemini-3.1-flash-lite'];
 const ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/models/';
@@ -26,13 +26,15 @@ ELEMENT TYPES
    - box_2d = a tight box around the visible handwriting. Give one element per separate label or line group. Lines stacked in the same block share one element, with \\n between the lines.
    - rotation = clockwise degrees needed to make the text read normally: 0 for normal horizontal writing; 90 for a word written vertically that reads from top to bottom; 270 for a word written vertically that reads from bottom to top; 180 for upside down; any other angle for slanted writing. box_2d is still the visible area of the writing as it appears in the photo.
    - color = the real ink color you see, as a hex code (blue ink, red ink, green ink, black ink...). Never leave it as a default guess.
-2. {"type":"arrow","from":[y,x],"to":[y,x],"color":"#rrggbb"}  a straight arrow, the head is at "to".
-3. {"type":"line","from":[y,x],"to":[y,x],"color":"#rrggbb"}  a straight line with no head.
-4. {"type":"curve","points":[[y,x],[y,x],...],"head":true,"color":"#rrggbb"}  a curved or bent arrow, a bracket, a loop or a squiggle: 4 to 14 points along the stroke in drawing order. head=true if the stroke ends with an arrow head.
-5. {"type":"ellipse","box_2d":[...],"color":"#rrggbb"}  a circle or oval drawn around something.
-6. {"type":"rect","box_2d":[...],"color":"#rrggbb"}  a drawn box.
+2. {"type":"arrow","from":[y,x],"to":[y,x],"color":"#rrggbb","width":"medium"}  a straight arrow, the head is at "to".
+3. {"type":"line","from":[y,x],"to":[y,x],"color":"#rrggbb","width":"medium"}  a straight line with no head.
+4. {"type":"curve","points":[[y,x],[y,x],...],"head":false,"closed":false,"color":"#rrggbb","width":"medium","fill":"#rrggbb"}  any curved or bent stroke: a curved arrow, a bracket, a loop, a squiggle, a wavy line, a leaf or cell outline. 4 to 40 points along the stroke in drawing order (more points for wigglier strokes). head=true if it ends with an arrow head. closed=true if the outline loops back on itself (then "fill" is optional, only if it is colored in).
+5. {"type":"ellipse","box_2d":[...],"color":"#rrggbb","width":"medium","fill":"#rrggbb"}  a circle, oval or dot. "fill" is optional: use it for solid dots or colored-in circles; leave it out for outlines.
+6. {"type":"rect","box_2d":[...],"color":"#rrggbb","width":"medium","fill":"#rrggbb"}  a drawn box.
 7. {"type":"brace","box_2d":[...],"orient":"left","color":"#rrggbb"}  a curly brace; orient is the direction the pointed tip faces: left, right, up or down.
-8. Pictures (drawn plants, cells, organs, animals, graphs, sketches) are redrawn in a separate step. Do NOT output anything for a picture: no "drawing" element and no arrows/lines/curves/circles that are part of the picture itself. Still output ALL the writing, including the labels of a picture, and the arrows/circles/braces that mark words.
+width is "thin", "medium" or "thick", as drawn.
+
+ILLUSTRATIONS (plants, cells, organs, animals, graphs, sketches): build them exactly like you would draw them in Word or PowerPoint, out of the SAME element types above, all in this same answer: every circle, dot, blob and oval is its own "ellipse" element; every straight stroke is a "line"; every curved outline or squiggle is a "curve" (use closed=true for outlines); boxes are "rect". Copy their positions, sizes, proportions and ink colors from the photo. A drawing may need dozens of elements: do not skip small circles or dots, do not merge several circles into one, and do not leave out the line or lines they sit on. Go over the whole drawing part by part (left to right) and make sure every mark you can see is an element.
 
 RULES
 - Transcribe exactly what is written. Do not rephrase, summarize, expand, reorder, translate or add anything. Keep the writer's wording, capitalization and punctuation.${
@@ -40,7 +42,7 @@ RULES
       ? ' You may fix clear spelling typos only (never change meaning, numbers or wording).'
       : ' Do not correct spelling or dates.'
   }
-- Be exhaustive: include every piece of writing, every arrow, circle, brace and every illustration that belongs to the notes.
+- Be exhaustive: include every piece of writing, every arrow, circle, brace and every part of every illustration that belongs to the notes.
 - Positions and sizes must match the photo closely.
 - Ignore everything that is not part of the notes: the wall, screws, glare, pictures or stickers stuck below the board, signatures and doodles by someone else.
 - If a word is hard to read, give your best reading and set "unsure": true on that text element.
@@ -89,7 +91,7 @@ export async function readNotes(dataUrl, settings, onStatus, promptOverride) {
   if (!m) throw new AIError('Could not read that photo.', true);
   const body = {
     contents: [{ role: 'user', parts: [{ text: promptOverride || buildPrompt(settings) }, { inline_data: { mime_type: m[1], data: m[2] } }] }],
-    generationConfig: { temperature: 0.1, responseMimeType: 'application/json' },
+    generationConfig: { temperature: 0.1, responseMimeType: 'application/json', maxOutputTokens: 32000 },
   };
   const first = (settings.model || DEFAULT_MODEL).trim();
   const models = [first, ...FALLBACKS.filter((x) => x !== first)];
@@ -272,6 +274,8 @@ export async function buildElements(data, page, settings, photo) {
   for (const e of list) {
     if (!e || typeof e !== 'object') continue;
     const col = color(e.color, '#3db8e8');
+    const sw = STROKE_W[e.width] || 3.5;
+    const fillc = typeof e.fill === 'string' && /^#?[0-9a-fA-F]{3,6}$/.test(e.fill.trim()) ? color(e.fill.startsWith('#') ? e.fill : '#' + e.fill, null) : null;
     switch (e.type) {
       case 'text': {
         const b = box(e.box_2d);
@@ -284,13 +288,13 @@ export async function buildElements(data, page, settings, photo) {
       case 'line': {
         const a = pt(e.from), z = pt(e.to);
         if (!a || !z) break;
-        front.push({ id: uid(), type: e.type, x1: a.x * sx, y1: a.y * sy, x2: z.x * sx, y2: z.y * sy, color: col, sw: 3.5 });
+        front.push({ id: uid(), type: e.type, x1: a.x * sx, y1: a.y * sy, x2: z.x * sx, y2: z.y * sy, color: col, sw }); 
         break;
       }
       case 'curve': {
         const pts = (Array.isArray(e.points) ? e.points : []).map(pt).filter(Boolean);
         if (pts.length < 2) break;
-        front.push({ id: uid(), type: 'pen', pts: pts.map((p) => [p.x * sx, p.y * sy]), color: col, sw: 3.5, head: !!e.head });
+        front.push({ id: uid(), type: 'pen', pts: pts.map((p) => [p.x * sx, p.y * sy]), color: col, sw, head: !!e.head && !e.closed, ...(e.closed && pts.length > 2 ? { closed: true } : {}), ...(e.closed && fillc && pts.length > 2 ? { fill: fillc } : {}) });
         break;
       }
       case 'ellipse':
@@ -298,7 +302,8 @@ export async function buildElements(data, page, settings, photo) {
       case 'brace': {
         const b = box(e.box_2d);
         if (!b) break;
-        const el = { id: uid(), type: e.type, x: b.x * sx, y: b.y * sy, w: b.w * sx, h: b.h * sy, color: col, sw: 3.5 };
+        const el = { id: uid(), type: e.type, x: b.x * sx, y: b.y * sy, w: b.w * sx, h: b.h * sy, color: col, sw };
+        if (fillc && e.type !== 'brace') el.fill = fillc;
         if (e.type === 'brace') {
           const o = ['left', 'right', 'up', 'down'].includes(e.orient) ? e.orient : el.h >= el.w ? 'left' : 'down';
           el.orient = o;
@@ -318,4 +323,74 @@ export async function buildElements(data, page, settings, photo) {
     }
   }
   return { elements: [...back, ...front], assets: newAssets };
+}
+
+
+/* ---------- exact tracing of the ink (finds the circles and dots the AI skips) ---------- */
+
+// box in PHOTO pixels, whiteBoxes in photo pixels. Returns one "sketch" element placed in page units or null.
+export async function traceSketch(photoSrc, box, whiteBoxes, sc, settings) {
+  const res = await traceInk(photoSrc, box, whiteBoxes, 900);
+  if (!res) return null;
+  const k = Math.max(1, Math.round(box.w)) / res.w; // sample px -> photo px (width based)
+  const kx = box.w / res.w, ky = box.h / res.h;
+  const P = res.shapes.map((sh) => ({ ...sh, q: sh.pts.map(([x, y]) => [(box.x + x * kx) / sc, (box.y + y * ky) / sc]) }));
+  let x1 = 1e9, y1 = 1e9, x2 = -1e9, y2 = -1e9;
+  for (const sh of P) if (!sh.hole) for (const [x, y] of sh.q) { x1 = Math.min(x1, x); y1 = Math.min(y1, y); x2 = Math.max(x2, x); y2 = Math.max(y2, y); }
+  if (!(x2 > x1)) return null;
+  const w = Math.max(20, x2 - x1), h = Math.max(20, y2 - y1);
+  const rnd = (v) => Math.round(v * 1000) / 1000;
+  void k;
+  return {
+    id: uid(), type: 'sketch', x: x1, y: y1, w, h, rot: 0, traced: true,
+    strokes: P.map((sh) => {
+      const col = sh.hole ? '#ffffff' : settings.forceBlack ? '#1a1a1a' : sh.color;
+      return { pts: sh.q.map(([x, y]) => [rnd((x - x1) / w), rnd((y - y1) / h)]), color: col, sw: 1, closed: true, fill: col };
+    }),
+  };
+}
+
+function textBoxPage(e) {
+  const w = e.bw || 0, h = e.bh || 0;
+  const c = { x: e.x + w / 2, y: e.y + h / 2 };
+  const a = ((e.rot || 0) * Math.PI) / 180, cs = Math.cos(a), sn = Math.sin(a);
+  const xs = [], ys = [];
+  for (const [dx, dy] of [[-w / 2, -h / 2], [w / 2, -h / 2], [w / 2, h / 2], [-w / 2, h / 2]]) { xs.push(c.x + dx * cs - dy * sn); ys.push(c.y + dx * sn + dy * cs); }
+  const x = Math.min(...xs), y = Math.min(...ys);
+  return { x: x - 4, y: y - 4, w: Math.max(...xs) - x + 8, h: Math.max(...ys) - y + 8 };
+}
+
+// replace each AI-drawn sketch by an exact trace of the photo around it (kept as fallback if tracing finds nothing)
+export async function refineSketches(elements, page, photo, settings) {
+  const sc = photo.w / page.w;
+  const sketches = elements.filter((e) => e.type === 'sketch');
+  if (!sketches.length) return elements;
+  const texts = elements.filter((e) => e.type === 'text').map(textBoxPage);
+  let out = elements;
+  for (const sk of sketches) {
+    try {
+      const padX = Math.max(40, sk.w * 0.3), padY = Math.max(40, sk.h * 0.3);
+      const R = { x: Math.max(0, sk.x - padX), y: Math.max(0, sk.y - padY) };
+      R.w = Math.min(page.w, sk.x + sk.w + padX) - R.x;
+      R.h = Math.min(page.h, sk.y + sk.h + padY) - R.y;
+      const box = { x: R.x * sc, y: R.y * sc, w: R.w * sc, h: R.h * sc };
+      const white = texts.map((t) => ({ x: t.x * sc, y: t.y * sc, w: t.w * sc, h: t.h * sc }));
+      const tr = await traceSketch(photo.dataUrl, box, white, sc, settings);
+      if (!tr) continue;
+      const inside = (e) => {
+        if (e.type === 'text' || e.type === 'sketch' || e.type === 'image') return false;
+        const b = bboxOfEl(e);
+        return b && b.x >= R.x && b.y >= R.y && b.x + b.w <= R.x + R.w && b.y + b.h <= R.y + R.h;
+      };
+      out = out.filter((e) => e !== sk && !inside(e));
+      out.unshift(tr);
+    } catch (err) { /* keep the AI version */ }
+  }
+  return out;
+}
+function bboxOfEl(e) {
+  if (e.type === 'line' || e.type === 'arrow') return { x: Math.min(e.x1, e.x2), y: Math.min(e.y1, e.y2), w: Math.abs(e.x2 - e.x1), h: Math.abs(e.y2 - e.y1) };
+  if (e.type === 'pen') { const xs = e.pts.map((p) => p[0]), ys = e.pts.map((p) => p[1]); return { x: Math.min(...xs), y: Math.min(...ys), w: Math.max(...xs) - Math.min(...xs), h: Math.max(...ys) - Math.min(...ys) }; }
+  if ('w' in e) return { x: e.x, y: e.y, w: e.w, h: e.h };
+  return null;
 }

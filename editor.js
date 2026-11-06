@@ -2,7 +2,7 @@
 // Supports: text (rotatable), pen / curved arrows, arrows, lines, circles, boxes, braces,
 // images (illustrations), two-finger pinch zoom + pan, rotate handle, undo/redo.
 
-export const VERSION = '4';
+export const VERSION = '6';
 export const FONT = "Roboto,'Segoe UI',system-ui,-apple-system,'Noto Sans',Arial,sans-serif";
 export const PALETTE = [
   ['Black', '#1a1a1a'],
@@ -148,9 +148,9 @@ export function elementSVG(el, assets) {
       return `<line x1="${n(el.x1)}" y1="${n(el.y1)}" x2="${n(bx)}" y2="${n(by)}" stroke="${c}" stroke-width="${sw}" stroke-linecap="round"/>` + headSVG(el.x2, el.y2, ang, sw, c);
     }
     case 'ellipse':
-      return `<ellipse cx="${n(el.x + el.w / 2)}" cy="${n(el.y + el.h / 2)}" rx="${n(el.w / 2)}" ry="${n(el.h / 2)}" fill="none" stroke="${c}" stroke-width="${sw}"/>`;
+      return `<ellipse cx="${n(el.x + el.w / 2)}" cy="${n(el.y + el.h / 2)}" rx="${n(el.w / 2)}" ry="${n(el.h / 2)}" fill="${el.fill || 'none'}" stroke="${c}" stroke-width="${sw}"/>`;
     case 'rect':
-      return `<rect x="${n(el.x)}" y="${n(el.y)}" width="${n(el.w)}" height="${n(el.h)}" rx="6" fill="none" stroke="${c}" stroke-width="${sw}"/>`;
+      return `<rect x="${n(el.x)}" y="${n(el.y)}" width="${n(el.w)}" height="${n(el.h)}" rx="6" fill="${el.fill || 'none'}" stroke="${c}" stroke-width="${sw}"/>`;
     case 'brace':
       return `<path d="${bracePath(el)}" fill="none" stroke="${c}" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round"/>`;
     case 'pen': {

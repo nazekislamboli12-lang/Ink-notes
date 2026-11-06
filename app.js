@@ -3,13 +3,13 @@ import { Editor, PALETTE, rasterPage, uid, esc, VERSION as ED_V } from './editor
 import { db, saveAsset, getAsset, loadAssets, assetIdsOf, exportAll, importAll } from './db.js';
 import { buildPDF } from './pdfwriter.js';
 import { cropClean } from './imaging.js';
-import { VERSION as AI_V, readNotes, readGraphics, mergeGraphics, traceRegion, buildElements, testKey, DEFAULT_MODEL, AIError } from './ai.js';
+import { VERSION as AI_V, readNotes, traceRegion, traceSketch, buildElements, testKey, DEFAULT_MODEL, AIError } from './ai.js';
 
 const $ = (s, r = document) => r.querySelector(s);
 const app = $('#app');
 window.__inkLoaded = true;
-const VERSION = '4';
-if (ED_V !== VERSION || AI_V !== VERSION) setTimeout(() => { const d = document.createElement('div'); d.style.cssText = 'position:fixed;left:0;right:0;top:0;z-index:99;background:#c93636;color:#fff;padding:10px;text-align:center'; d.textContent = 'Some app files are old (mixed versions). Upload ALL files from the v4 zip, then reload twice.'; document.body.appendChild(d); }, 500);
+const VERSION = '6';
+if (ED_V !== VERSION || AI_V !== VERSION) setTimeout(() => { const d = document.createElement('div'); d.style.cssText = 'position:fixed;left:0;right:0;top:0;z-index:99;background:#c93636;color:#fff;padding:10px;text-align:center'; d.textContent = 'Some app files are old (mixed versions). Upload ALL files from the v6 zip, then reload twice.'; document.body.appendChild(d); }, 500);
 
 /* ---------- icons ---------- */
 const ICONS = {
@@ -416,13 +416,9 @@ async function aiFromFile(file) {
     b.set('Reading your notes… this can take up to a minute');
     const { data, model } = await readNotes(img.dataUrl, S.settings, (t) => b.set(t));
     if (!data || typeof data !== 'object') throw new Error('The AI answer could not be understood.');
-    let merged = data;
-    try {
-      b.set('Looking again for drawings…');
-      merged = mergeGraphics(data, await readGraphics(img.dataUrl, S.settings, () => {}));
-    } catch (e2) { if (e2 && e2.fatal) throw e2; /* keep the first reading */ }
+    const merged = data;
     const page = newPage(nb.id, img.w, img.h);
-    b.set('Copying your drawings…');
+    b.set('Building the page…');
     const built = await buildElements(merged, page, S.settings, img);
     page.elements = built.elements;
     page.title = typeof merged.page_title === 'string' ? data.page_title.slice(0, 60) : '';
@@ -596,6 +592,7 @@ async function openEditor(page, opts = {}) {
       const choice = await new Promise((res) => {
         const m = modal(`<h2>This part of the photo</h2>
           <button class="opt" data-c="ai">${ic('sparkle')}<span>Redraw with AI<small>Lines and shapes you can edit</small></span></button>
+          <button class="opt" data-c="trace">${ic('pen')}<span>Trace it exactly<small>Every line, circle and dot, no AI needed</small></span></button>
           <button class="opt" data-c="copy">${ic('image')}<span>Paste an exact copy<small>A cleaned picture from the photo</small></span></button>
           <button class="opt" data-c="no">${ic('close')}<span>Cancel</span></button>`, { bottom: true });
         m.el.addEventListener('click', (e) => { const c = e.target.closest('[data-c]'); if (c) { m.close(); res(c.dataset.c); } });
@@ -604,7 +601,7 @@ async function openEditor(page, opts = {}) {
       if (choice === 'no') return null;
       const sc = refImg.w / page.w;
       const box = { x: b.x * sc, y: b.y * sc, w: b.w * sc, h: b.h * sc };
-      const bz = busy(choice === 'ai' ? 'Redrawing with AI…' : 'Copying that part of the photo…');
+      const bz = busy(choice === 'ai' ? 'Redrawing with AI…' : choice === 'trace' ? 'Tracing…' : 'Copying that part of the photo…');
       try {
         if (choice === 'ai') {
           if (!S.settings.apiKey) { toast('Add your Gemini key in Settings first'); return null; }
@@ -617,6 +614,11 @@ async function openEditor(page, opts = {}) {
           if (!els.length) { toast('The AI found no drawing there'); return null; }
           ed.addElements(els);
           return null;
+        }
+        if (choice === 'trace') {
+          const sk = await traceSketch(refSrc, box, [], sc, S.settings);
+          if (!sk) { toast('Nothing to trace there'); return null; }
+          return sk;
         }
         const r = await cropClean(refSrc, box, [], 1000);
         const a = uid(), rw = uid();
@@ -840,7 +842,7 @@ async function exportPDF(nb, pages) {
 function openSettings() {
   const s = S.settings;
   const m = modal(`
-    <h2>Settings <small class="note">v4</small></h2>
+    <h2>Settings <small class="note">v6</small></h2>
     <label for="s-key">Gemini API key (free)</label>
     <input id="s-key" type="password" autocomplete="off" spellcheck="false" placeholder="Paste your key here">
     <p class="note">Get a free key at <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a>. It is saved only on this device.</p>
